@@ -31,19 +31,27 @@ if gpus:
         print(e)
 
 
-def preprocess_input(X): return X / 127.5 - 1  # to be in range [0,1]
+#def preprocess_input(X): return X / 127.5 - 1  # to be in range [0,1]
+
+BACKBONE = 'vgg16'
+preprocess_input = sm.get_preprocessing(BACKBONE)
 
 
 def preprocess_output(Y): return np.asarray(Y > 0.1 * np.max(Y), dtype=np.uint8)
 
 
-dataset_list = ["kvasir", "cvc", "ISIC2017",  "ETIS-LaribPolypDB", "Shenzhen_Chest_X-ray", "ultrasound_nerve"]
+dataset_list = ["kvasir", "cvc", "ISIC2017", "ETIS-LaribPolypDB", "kvasir_instrument", "edd2020_BE", "edd2020_polyp"]
 model_list = ["Unet", "Linknet", "FPN", "PSPNet"]
+lam_list = [0.05, 0.1, 0.3, 0.5, 0.7, 0.9]
+decay_list = [0.7, 0.8, 0.9, 0.99]
+combine_list = ["original", "modified"]
 
-data_id = int(sys.argv[1])  # 0,1,2,3,4 (total 5 dataset)
+data_id = int(sys.argv[1])  # 0,1,2,3,4,5,6 (total 7 dataset)
 model_id = int(sys.argv[2])  # 0, 1, 2, 3
-seed_id = int(sys.argv[3])  # 10 random seed (0-9)
-
+lam_id = int(sys.argv[3]) # 0, 1, 2, 3, 4, 5 #total 6
+decay_id = int(sys.argv[4]) #0,1,2,3 total 4
+combine_id = int(sys.argv[5]) # original, modified
+seed_id = int(sys.argv[6])  # 10 random seed (0-9)
 
 dataset = dataset_list[data_id]
 model_name = model_list[model_id]
@@ -62,8 +70,8 @@ assert np.max(Y) == 1
 assert np.min(Y) == 0
 
 # data split
-X_trnval, X_tst, Y_trnval, Y_tst = train_test_split(X, Y, test_size=1.5 / 10, random_state=seed_id)
-X_trn, X_val, Y_trn, Y_val = train_test_split(X_trnval, Y_trnval, test_size=1.5 / 8.5, random_state=seed_id)
+X_trnval, X_tst, Y_trnval, Y_tst = train_test_split(X, Y, test_size=2 / 10, random_state=seed_id)
+X_trn, X_val, Y_trn, Y_val = train_test_split(X_trnval, Y_trnval, test_size=2 / 8, random_state=seed_id)
 
 # testset with target mask only
 print("there are {} images in testset".format(len(Y_tst)))
@@ -102,22 +110,22 @@ data_flow = zip(image_flow, mask_flow)
 
 tmpbatchx = image_flow.next()
 tmpbatchy = mask_flow.next()
-assert np.max(tmpbatchx) == 1
-assert np.min(tmpbatchx) == -1
+#assert np.max(tmpbatchx) == 1
+#assert np.min(tmpbatchx) == -1
 assert np.max(tmpbatchy) == 1
 assert np.min(tmpbatchy) == 0
 
 X_trn = preprocess_input(X_trn)
-assert np.max(X_trn) == 1
-assert np.min(X_trn) == -1
+#assert np.max(X_trn) == 1
+#assert np.min(X_trn) == -1
 
 X_val = preprocess_input(X_val)
-assert np.max(X_val) == 1
-assert np.min(X_val) == -1
+#assert np.max(X_val) == 1
+#assert np.min(X_val) == -1
 
 X_tst = preprocess_input(X_tst)
-assert np.max(X_tst) == 1
-assert np.min(X_tst) == -1
+#assert np.max(X_tst) == 1
+#assert np.min(X_tst) == -1
 
 print(len(X_trn), len(X_val), len(X_tst))
 
@@ -126,8 +134,9 @@ print(':: prediction')
 model = load_model(dataset + '/models/' + dataset + '_' + model_name + '_' + "seed_" + str(seed_id) + '.h5',
                    custom_objects={'iou_score': IOUScore(threshold=0.5, per_image=True)})
 
-decay = 0.9
-lam = 0.1
+decay = decay_list[decay_id]
+lam = lam_list[lam_id]
+combine = combine_list[combine_id]
 T = 5
 
 a = 0
@@ -144,9 +153,14 @@ for it in range(T + 1):
         aX_tst = np.copy(X_tst)
 
     else:
-        blur_level = 3
-        X_tst_blur = np.array([cv2.blur(x, (blur_level, blur_level)) for x in aX_tst])
-        aX_tst = X_tst * lam + (1 - lam) * (aX_tst * Y_tst_score + X_tst_blur * (1 - Y_tst_score))
+        if combine == "original":
+            blur_level = 3
+            X_tst_blur = np.array([cv2.blur(x, (blur_level, blur_level)) for x in aX_tst])
+            aX_tst = X_tst * lam + (1 - lam) * (aX_tst * Y_tst_score + X_tst_blur * (1 - Y_tst_score))
+        elif combine == "modified":
+            blur_level = 3
+            X_tst_blur = np.array([cv2.blur(x, (blur_level, blur_level)) for x in aX_tst])
+            aX_tst = X_tst * lam + (1 - lam) * (X_tst * Y_tst_score + X_tst_blur * (1 - Y_tst_score)) # X_tst is used instead aX_tst
 
     Y_tst_score = model.predict(aX_tst, batch_size=10)[:, :, :, :1]
     print(it, np.sum(Y_tst_score > 0.5), np.min(aX_tst), np.max(aX_tst))
@@ -186,8 +200,9 @@ for it in range(T + 1):
     ensemble_result_auroc.append(np.mean(auroc_list))
 
 
-f = open(dataset + '/results/' + dataset + '_' + model_name + '_' + "seed_" + str(seed_id) + "_iou" + '.csv', 'w',
-         newline='')
+f = open(dataset + '/results/' + dataset + '_' + model_name + '_' + "seed_"
+         + str(seed_id) +"_lambda"+ str(lam)+"_decay" +str(decay) +
+         "_combine_" + combine + '.csv', 'w', newline='')
 with f:
     writer = csv.writer(f)
     writer.writerow(single_result_iou)
@@ -196,11 +211,15 @@ with f:
     writer.writerow(ensemble_result_auroc)
 
 if seed_id == 9:  # 9 is maximum random seed
-    df = pd.read_csv(dataset + '/results/' + dataset + '_' + model_name + '_' + "seed_" + str(seed_id) + "_iou" + '.csv', header=None)
+    df = pd.read_csv(dataset + '/results/' + dataset + '_' + model_name + '_' + "seed_"
+         + str(seed_id) +"_lambda"+ str(lam)+"_decay" +str(decay) +
+         "_combine_" + combine + '.csv', header=None)
     rows, cols = df.shape
     result_array = np.empty((rows, cols, seed_id + 1))
     for i in range(seed_id + 1):
-        df_2 = pd.read_csv(dataset + '/results/' + dataset + '_' + model_name + '_' + "seed_" + str(i) + "_iou" + '.csv', header=None)
+        df_2 = pd.read_csv(dataset + '/results/' + dataset + '_' + model_name + '_' + "seed_"
+         + str(i) +"_lambda"+ str(lam)+"_decay" +str(decay) +
+         "_combine_" + combine + '.csv', header=None)
         result_array[:, :, i] = df_2.values
 
     average = np.mean(result_array, axis=2)
@@ -209,5 +228,9 @@ if seed_id == 9:  # 9 is maximum random seed
     df_avg = pd.DataFrame(average)
     df_std = pd.DataFrame(std)
 
-    df_avg.to_csv(dataset + '/results/' + dataset + '_' + model_name + '_average' + '.csv', header=None, index=False)
-    df_std.to_csv(dataset + '/results/' + dataset + '_' + model_name + '_std' + '.csv', header=None, index=False)
+    df_avg.to_csv(dataset + '/results/' + dataset + '_' + model_name +
+                  "_lambda"+ str(lam)+"_decay" +str(decay) +
+         "_combine_" + combine +"_average"+ '.csv', header=None, index=False)
+    df_std.to_csv(dataset + '/results/' + dataset + '_' + model_name +
+                  "_lambda"+ str(lam)+"_decay" +str(decay) +
+         "_combine_" + combine +"_std"+ '.csv', header=None, index=False)

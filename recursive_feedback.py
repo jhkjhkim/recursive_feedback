@@ -31,17 +31,28 @@ if gpus:
         print(e)
 
 
-def preprocess_input(X): return X / 127.5 - 1  # to be in range [0,1]
+#def preprocess_input(X): return X / 127.5 - 1  # to be in range [0,1]
 
+BACKBONE = 'vgg16'
+preprocess_input = sm.get_preprocessing(BACKBONE)
 
 def preprocess_output(Y): return np.asarray(Y > 0.1 * np.max(Y), dtype=np.uint8)
 
+def denormalize(x): # to visualize, np.flip is needed for vgg16
+    """Scale image to range 0..1 for correct plot"""
+    x_max = np.percentile(x, 98)
+    x_min = np.percentile(x, 2)
+    x = (x - x_min) / (x_max - x_min)
+    x = x.clip(0, 1)
+    return x
 
-dataset_list = ["kvasir", "cvc", "ISIC2017", "ETIS-LaribPolypDB", "Shenzhen_Chest_X-ray", "ultrasound_nerve"]
+
+
+dataset_list = ["kvasir", "cvc", "ISIC2017", "ETIS-LaribPolypDB", "kvasir_instrument", "edd2020_BE", "edd2020_polyp"]
 model_list = ["Unet", "Linknet", "FPN", "PSPNet"]
 
-data_id = int(sys.argv[1])  # 0,1,2,3,4 (total 5 dataset)
-model_id = int(sys.argv[2])  # 0, 1, 2, 3
+data_id = int(sys.argv[1])  # 0,1,2,3,4,5,6 (total 7 dataset)
+model_id = int(sys.argv[2])  # 0, 1, 2, 3 #fix 0
 seed_id = int(sys.argv[3])  # 10 random seed (0-9)
 
 dataset = dataset_list[data_id]
@@ -61,8 +72,8 @@ assert np.max(Y) == 1
 assert np.min(Y) == 0
 
 # data split
-X_trnval, X_tst, Y_trnval, Y_tst = train_test_split(X, Y, test_size=1.5 / 10, random_state=seed_id)
-X_trn, X_val, Y_trn, Y_val = train_test_split(X_trnval, Y_trnval, test_size=1.5 / 8.5, random_state=seed_id)
+X_trnval, X_tst, Y_trnval, Y_tst = train_test_split(X, Y, test_size=2 / 10, random_state=seed_id)
+X_trn, X_val, Y_trn, Y_val = train_test_split(X_trnval, Y_trnval, test_size=2 / 8, random_state=seed_id)
 
 # testset with target mask only
 print("there are {} images in testset".format(len(Y_tst)))
@@ -101,22 +112,22 @@ data_flow = zip(image_flow, mask_flow)
 
 tmpbatchx = image_flow.next()
 tmpbatchy = mask_flow.next()
-assert np.max(tmpbatchx) == 1
-assert np.min(tmpbatchx) == -1
+#assert np.max(tmpbatchx) == 1
+#assert np.min(tmpbatchx) == -1
 assert np.max(tmpbatchy) == 1
 assert np.min(tmpbatchy) == 0
 
 X_trn = preprocess_input(X_trn)
-assert np.max(X_trn) == 1
-assert np.min(X_trn) == -1
+#assert np.max(X_trn) == 1
+#assert np.min(X_trn) == -1
 
 X_val = preprocess_input(X_val)
-assert np.max(X_val) == 1
-assert np.min(X_val) == -1
+#assert np.max(X_val) == 1
+#assert np.min(X_val) == -1
 
 X_tst = preprocess_input(X_tst)
-assert np.max(X_tst) == 1
-assert np.min(X_tst) == -1
+#assert np.max(X_tst) == 1
+#assert np.min(X_tst) == -1
 
 print(len(X_trn), len(X_val), len(X_tst))
 
@@ -139,9 +150,11 @@ print(':: prediction')
 model = load_model(dataset + '/models/' + dataset + '_' + model_name + '_' + "seed_" + str(seed_id) + '.h5',
                    custom_objects={'iou_score': IOUScore(threshold=0.5, per_image=True)})
 
+
+
 decay = 0.9
 lam = 0.1
-T = 5
+T = 3
 
 a = 0
 b = 0
