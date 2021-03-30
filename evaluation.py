@@ -40,10 +40,10 @@ preprocess_input = sm.get_preprocessing(BACKBONE)
 def preprocess_output(Y): return np.asarray(Y > 0.1 * np.max(Y), dtype=np.uint8)
 
 
-dataset_list = ["kvasir", "cvc", "ISIC2017", "ETIS-LaribPolypDB", "kvasir_instrument", "edd2020_BE", "edd2020_polyp"]
+dataset_list = ["kvasir", "cvc", "kvasir_instrument", "ISIC2017"] # "edd2020_BE", "edd2020_polyp", "ETIS-LaribPolypDB"
 model_list = ["Unet", "Linknet", "FPN", "PSPNet"]
-lam_list = [0.05, 0.1, 0.3, 0.5, 0.7, 0.9]
-decay_list = [0.7, 0.8, 0.9, 0.99]
+lam_list = [0, 0.05, 0.1, 0.2]
+decay_list = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
 combine_list = ["original", "modified"]
 
 data_id = int(sys.argv[1])  # 0,1,2,3,4,5,6 (total 7 dataset)
